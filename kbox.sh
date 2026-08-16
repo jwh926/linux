@@ -14,17 +14,21 @@
 #   ./kbox.sh -a x86_64 defconfig     cross-compile for x86_64
 #   ./kbox.sh --arch arm64 Image
 # Without -a/--arch the host architecture is detected and the build is
-# native. Objects land in .build/<arch>/ so architectures don't collide.
+# native. Objects land in /build/<arch>/ so architectures don't collide.
 #
-# Everything is out-of-tree: objects land in .build/, so the source tree
-# stays clean and `git status` stays quiet.
+# Everything is out-of-tree: objects live on a `container volume` (VM-local
+# ext4, persistent across runs), not on virtiofs -- compiles aren't throttled
+# by host round-trips, and the source tree stays clean. The cost: artifacts
+# are only reachable through the container, e.g.
+#   ./kbox.sh shell -c 'cp /build/arm64/arch/arm64/boot/Image /src/'
 #
-# Overridable:  CPUS=10 JOBS=10 MEM=8g OUT=/path/to/out ./kbox.sh Image
+# Overridable:  CPUS=10 JOBS=10 MEM=8g VOL=kbox-build ./kbox.sh Image
 #
 set -euo pipefail
 
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CCACHE="${CCACHE:-$SRC/.ccache}"
+VOL="${VOL:-kbox-build}"
+VOLSIZE="${VOLSIZE:-64G}"
 IMAGE="${IMAGE:-kbox}"
 CPUS="${CPUS:-4}"
 MEM="${MEM:-4g}"
@@ -53,7 +57,7 @@ Common targets:
 
 Environment overrides (current defaults):
   CPUS=$CPUS JOBS=$JOBS MEM=$MEM IMAGE=$IMAGE
-  OUT=${OUT:-.build/<arch>}  CCACHE=$CCACHE
+  VOL=$VOL VOLSIZE=$VOLSIZE  (build-output volume, objects in /build/<arch>)
 
 Examples:
   ./kbox.sh defconfig && ./kbox.sh
@@ -119,9 +123,12 @@ if [ "$arch" != "$host_arch" ]; then
 	cross="$cross_prefix"
 fi
 
-OUT="${OUT:-$SRC/.build/$arch}"
+OUT="/build/$arch"
 
-mkdir -p "$OUT" "$CCACHE"
+if ! container volume inspect "$VOL" >/dev/null 2>&1; then
+	printf '==> creating build volume "%s" (%s, sparse; first run only)\n' "$VOL" "$VOLSIZE" >&2
+	container volume create -s "$VOLSIZE" "$VOL"
+fi
 
 if ! container image inspect "$IMAGE" >/dev/null 2>&1; then
 	printf '==> building toolchain image "%s" (first run only)\n' "$IMAGE" >&2
@@ -141,11 +148,8 @@ else
 	if [ $# -eq 0 ]; then
 		set -- "$default_image" modules
 	fi
-	# CC/HOSTCC are set explicitly rather than via a PATH shim: `container
-	# build` drops Dockerfile ENV, so nothing inside the image can be relied on.
-	set -- make -C /src O=/out -j"$JOBS" \
-		ARCH="$arch" ${cross:+CROSS_COMPILE="$cross"} \
-		CC="ccache ${cross}gcc" HOSTCC="ccache gcc" "$@"
+	set -- make -C /src O="$OUT" -j"$JOBS" \
+		ARCH="$arch" ${cross:+CROSS_COMPILE="$cross"} "$@"
 fi
 
 # bash 3.2 (the macOS default) treats "${tty[@]}" on an empty array as unset
@@ -153,7 +157,5 @@ fi
 exec container run --rm ${tty[@]+"${tty[@]}"} \
 	--cpus "$CPUS" --memory "$MEM" \
 	-v "$SRC:/src" \
-	-v "$OUT:/out" \
-	-v "$CCACHE:/ccache" \
-	-e CCACHE_DIR=/ccache \
+	-v "$VOL:/build" \
 	"$IMAGE" "$@"
