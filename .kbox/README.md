@@ -6,6 +6,12 @@ cd /Volumes/Dev/study/linux
 ./kbox.sh Image
 ```
 
+macOS에서는 Apple `container` VM 안에서, 리눅스에서는 **네이티브로** 빌드합니다. 리눅스에서 네이티브 대신 Docker를 쓰려면 `-d`/`--docker`를 붙입니다.
+
+- 네이티브 모드는 툴체인이 이미 설치돼 있다고 가정합니다(패키지 목록은 `Dockerfile` 참고 — 설치는 직접).
+- 네이티브 산출물은 트리의 `.build/<arch>/`에, 컨테이너 모드는 볼륨의 `/build/<arch>/`에 들어갑니다.
+- `-j` 기본값: 네이티브는 `nproc`, 컨테이너는 `$CPUS`.
+
 ## 명령
 
 | 명령                     | 하는 일                                             |
@@ -47,6 +53,7 @@ CPUS=10 JOBS=10 MEM=8g ./kbox.sh Image
 | `VOL`     | `kbox-build` | 빌드 산출물을 담는 볼륨 이름         |
 | `VOLSIZE` | 64G          | 볼륨 최대 크기 (sparse, 생성 시에만) |
 | `IMAGE`   | `kbox`       | 사용할 이미지 이름                   |
+| `OUT`     | `.build/<arch>` | 네이티브 모드의 산출물 위치       |
 
 ## 디렉터리 구조
 
